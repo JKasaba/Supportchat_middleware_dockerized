@@ -7,9 +7,9 @@ this service bridges whatsapp messages to zulip (and vice versa).
 It also writes transcripts and ticket comments to an RT instance.
 
 ## running locally
+place .env file in the directory
 ```bash
 docker build -t support-bridge .
-cp .env.example .env   # fill with real tokens + emails
 docker run --env-file .env -p 8080:5000 -v $(pwd)/data:/app/data support-bridge
 ```
 ## port
