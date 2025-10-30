@@ -17,6 +17,7 @@ ZULIP_BOT_DM_EMAIL    = os.environ["ZULIP_BOT_DM_EMAIL"]       # correspondence
 ZULIP_EXTRA_BOT_EMAIL = os.environ["ZULIP_EXTRA_BOT_EMAIL"]    # support‑secondary
 GRAPH_API_TOKEN       = os.environ["GRAPH_API_TOKEN"]
 WEBHOOK_VERIFY_TOKEN  = os.environ["WEBHOOK_VERIFY_TOKEN"]
+BUSINESS_PHONE_NUMBER_ID = os.environ["BUSINESS_PHONE_NUMBER_ID"]
 PORT                  = int(os.getenv("PORT", 5000))
 
 ZULIP_API_URL = "https://chat-test.filmlight.ltd.uk/api/v1/messages"
@@ -74,7 +75,7 @@ def _do_send_whatsapp(to: str, msg: str):
         "text": {"body": msg}
     }
     resp = requests.post(
-        "https://graph.facebook.com/v22.0/777113995477023/messages",
+       f"https://graph.facebook.com/v22.0/{BUSINESS_PHONE_NUMBER_ID}/messages",
         json=payload,
         headers={"Authorization": f"Bearer {GRAPH_API_TOKEN}"},
         timeout=10
@@ -616,7 +617,7 @@ def receive_zulip():
 
         with open(fname, "rb") as f:
             media_upload = requests.post(
-                "https://graph.facebook.com/v22.0/777113995477023/media",
+                f"https://graph.facebook.com/v22.0/{BUSINESS_PHONE_NUMBER_ID}/media",
                 headers={"Authorization": f"Bearer {GRAPH_API_TOKEN}"},
                 files={"file": (os.path.basename(fname), f, mime_type)},
                 data={"messaging_product": "whatsapp", "type": mime_type}
@@ -633,7 +634,7 @@ def receive_zulip():
 
             with open(fname, "rb") as f:
                 media_upload = requests.post(
-                    "https://graph.facebook.com/v22.0/777113995477023/media",
+                    f"https://graph.facebook.com/v22.0/{BUSINESS_PHONE_NUMBER_ID}/media",
                     headers={"Authorization": f"Bearer {GRAPH_API_TOKEN}"},
                     files={"file": (file_name, f, mime_type)},
                     data={"messaging_product": "whatsapp", "type": mime_type}
@@ -671,7 +672,7 @@ def receive_zulip():
             }
 
         resp = requests.post(
-            "https://graph.facebook.com/v22.0/777113995477023/messages",
+            f"https://graph.facebook.com/v22.0/{BUSINESS_PHONE_NUMBER_ID}/messages",
             json=wa_payload,
             headers={"Authorization": f"Bearer {GRAPH_API_TOKEN}"}
         )
