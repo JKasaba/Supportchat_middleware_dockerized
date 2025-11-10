@@ -1,7 +1,7 @@
 import json, os, threading
 
 DATA_FILE = os.getenv("BRIDGE_DB_FILE", "./bridge_state.json")
-_lock     = threading.Lock()
+_lock     = threading.RLock()
 
 def _default():
     return {
@@ -17,7 +17,6 @@ def _load():
     try:
         with open(DATA_FILE) as f:
             raw = json.load(f)
-            # Be tolerant of older files that may still have engineer_to_set
             return {
                 "phone_to_chat": raw.get("phone_to_chat", {}),
                 "transcripts": raw.get("transcripts", {}),
@@ -42,7 +41,13 @@ def save():
     }
 
     tmp = DATA_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(serialisable, f)
-    os.replace(tmp, DATA_FILE)
+    with _lock:
+        with open(tmp, "w") as f:
+            json.dump(serialisable, f)
+        os.replace(tmp, DATA_FILE)
+
+def append_transcript_line(ticket_id: int, line: str):
+    with _lock:
+        state.setdefault("transcripts", {}).setdefault(str(ticket_id), []).append(line)
+        save()
 

@@ -28,13 +28,4 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
 
-
-CMD exec gunicorn \
-  --bind 0.0.0.0:${PORT} \
-  --workers 2 \
-  --threads 8 \
-  --timeout 60 \
-  --graceful-timeout 30 \
-  --access-logfile - \
-  --error-logfile - \
-  main:app 
+CMD ["gunicorn", "-k", "sync", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5000", "main:app"]

@@ -38,7 +38,7 @@ INIT_RE  = re.compile(r"RT\s*#?(\d+)\s*\(([^)]+)\)", re.I)     # first WA text
 
 
 def _log_line(ticket_id: int, line: str):
-    db.state["transcripts"].setdefault(str(ticket_id), []).append(line)
+    db.append_transcript_line(ticket_id, line)
 
 #create RT Ticket
 
