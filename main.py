@@ -29,6 +29,7 @@ CLOSED_REPLY = "Chat closed, please contact support to start a new chat."
 CHAT_TTL_SECONDS = 60 * 3 # 3 minutes (will be 24 hours when implemented)
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
 CLEANUP_STOP = threading.Event()
+EXPIRY_LOCK = threading.Lock()
 _CLEANUP_STARTED = False
 # eng to email map
 ENGINEER_EMAIL_MAP = {
@@ -303,10 +304,15 @@ def _end_chat(phone: str, chat: dict):
 def _cleanup_expired_chats():
     now = time.time()
     expired = []
-    for phone, chat in list(db.state.get("phone_to_chat", {}).items()):
-        last_ts = chat.get("last_customer_ts")
-        if last_ts and (now - last_ts) > CHAT_TTL_SECONDS:
-            expired.append((phone, chat))
+    with EXPIRY_LOCK:
+        for phone, chat in list(db.state.get("phone_to_chat", {}).items()):
+            if chat.get("expired"):
+                continue  # already processed
+            last_ts = chat.get("last_customer_ts")
+            if last_ts and (now - last_ts) > CHAT_TTL_SECONDS:
+                chat["expired"] = True  # mark first to avoid double processing
+                expired.append((phone, chat))
+
     for phone, chat in expired:
         topic = chat.get("topic")
         try:
@@ -332,6 +338,7 @@ def _cleanup_expired_chats():
         except Exception as e:
             print("Could not push transcript during cleanup:", e)
         db.state["phone_to_chat"].pop(phone, None)
+
     if expired:
         db.save()
 
@@ -380,7 +387,6 @@ def verify_webhook():
 
 @app.post("/webhook")
 def receive_whatsapp():
-    _cleanup_expired_chats()
     body = request.get_json(force=True)
     msg  = (body.get("entry",[{}])[0].get("changes",[{}])[0]
                   .get("value",{}).get("messages",[{}])[0])
@@ -596,7 +602,6 @@ def receive_whatsapp():
 # Zulip webhook
 @app.post("/webhook/zulip")
 def receive_zulip():
-    _cleanup_expired_chats()
     payload = request.get_json(force=True)
     msg = payload.get("message", {})
     sender = msg.get("sender_email")
