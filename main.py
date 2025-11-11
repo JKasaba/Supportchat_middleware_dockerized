@@ -6,6 +6,7 @@ import mimetypes
 import html
 from urllib.parse import urljoin
 import time
+import threading
 
 
 app = Flask(__name__)
@@ -24,7 +25,8 @@ ZULIP_API_URL = "https://chat-test.filmlight.ltd.uk/api/v1/messages"
 ZULIP_BASE_URL = ZULIP_API_URL.split('/api', 1)[0] 
 MAX_CHATS     = 2                       # slot0 and slot1 only
 CLOSED_REPLY = "Chat closed, please contact support to start a new chat."
-CHAT_TTL_SECONDS = 60 * 60 * 4  # 4 hours (will be 24 hours when implemented)
+CHAT_TTL_SECONDS = 60 * 3 # 3 minutes (will be 24 hours when implemented)
+CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
 # eng to email map
 ENGINEER_EMAIL_MAP = {
     k[len("ENGINEER_EMAIL_"):].lower(): v
@@ -282,7 +284,7 @@ def _end_chat(phone: str, chat: dict):
     # notify customer + stream
     _do_send_whatsapp(phone, "Chat closed by engineer. Thank you!")
     if topic:
-        _send_zulip_dm_stream("SupportChat-test", topic, "✌️ Chat with customer closed. Transcript will be posted to RT.")
+        _send_zulip_dm_stream("SupportChat-test", topic, "Chat with customer closed. Transcript will be posted to RT.")
 
     # push transcript to RT
     try:
@@ -309,21 +311,39 @@ def _cleanup_expired_chats():
                 _send_zulip_dm_stream(
                     "SupportChat-test",
                     topic,
-                    "⏳ Chat expired after 24h of no customer messages. Pushing transcript to RT and cleaning up."
+                    "Chat expired after inactivity. Pushing transcript to RT and notifying customer."
                 )
         except Exception as e:
             print("Stream notify failed during cleanup:", e)
-
-        # Push transcript before removing the chat
+        try:
+            _do_send_whatsapp(
+                phone,
+                "Your support chat has expired due to inactivity. The transcript was archived. "
+                "Reply with the subject of a new issue to start a fresh ticket."
+            )
+        except Exception as e:
+            print("WhatsApp notify failed during cleanup:", e)
         try:
             _push_transcript(chat["ticket"])
             print(f"Pushed transcript to RT for expired chat ticket {chat['ticket']}")
         except Exception as e:
             print("Could not push transcript during cleanup:", e)
-
         db.state["phone_to_chat"].pop(phone, None)
     if expired:
         db.save()
+
+
+@app.before_first_request
+def _start_cleanup_thread():
+    def loop():
+        print(f"Cleanup thread started (interval={CLEANUP_INTERVAL_SECONDS}s, ttl={CHAT_TTL_SECONDS}s)")
+        while True:
+            try:
+                _cleanup_expired_chats()
+            except Exception as e:
+                print("Cleanup loop error:", e)
+            time.sleep(CLEANUP_INTERVAL_SECONDS)
+    threading.Thread(target=loop, daemon=True).start()
 
 
 # WhatsApp webhook
