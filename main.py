@@ -7,6 +7,7 @@ import html
 from urllib.parse import urljoin
 import time
 import threading
+import atexit, signal
 
 
 app = Flask(__name__)
@@ -28,6 +29,7 @@ CLOSED_REPLY = "Chat closed, please contact support to start a new chat."
 CHAT_TTL_SECONDS = 60 * 3 # 3 minutes (will be 24 hours when implemented)
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
 CLEANUP_STOP = threading.Event()
+_CLEANUP_STARTED = False
 # eng to email map
 ENGINEER_EMAIL_MAP = {
     k[len("ENGINEER_EMAIL_"):].lower(): v
@@ -334,9 +336,13 @@ def _cleanup_expired_chats():
         db.save()
 
 
-# Replace the old hook
-@app.before_serving
-def _start_cleanup_thread():
+# Cleanup loop (Flask 3 compatible)
+def _start_cleanup_loop():
+    global _CLEANUP_STARTED
+    if _CLEANUP_STARTED:
+        return
+    _CLEANUP_STARTED = True
+
     def loop():
         print(f"Cleanup thread started (interval={CLEANUP_INTERVAL_SECONDS}s, ttl={CHAT_TTL_SECONDS}s)")
         while not CLEANUP_STOP.is_set():
@@ -344,13 +350,24 @@ def _start_cleanup_thread():
                 _cleanup_expired_chats()
             except Exception as e:
                 print("Cleanup loop error:", e)
-            # Wait with wake-up on shutdown
             CLEANUP_STOP.wait(CLEANUP_INTERVAL_SECONDS)
+        print("Cleanup thread stopping.")
+
     threading.Thread(target=loop, daemon=True).start()
 
-@app.after_serving
-def _stop_cleanup_thread():
+@app.before_request
+def _ensure_cleanup_thread():
+    _start_cleanup_loop()
+
+def _shutdown_cleanup(*_):
     CLEANUP_STOP.set()
+
+atexit.register(_shutdown_cleanup)
+for _sig in (signal.SIGINT, signal.SIGTERM):
+    try:
+        signal.signal(_sig, _shutdown_cleanup)
+    except Exception:
+        pass
 
 
 # WhatsApp webhook
