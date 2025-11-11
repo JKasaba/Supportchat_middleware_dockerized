@@ -27,6 +27,7 @@ MAX_CHATS     = 2                       # slot0 and slot1 only
 CLOSED_REPLY = "Chat closed, please contact support to start a new chat."
 CHAT_TTL_SECONDS = 60 * 3 # 3 minutes (will be 24 hours when implemented)
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
+CLEANUP_STOP = threading.Event()
 # eng to email map
 ENGINEER_EMAIL_MAP = {
     k[len("ENGINEER_EMAIL_"):].lower(): v
@@ -333,17 +334,23 @@ def _cleanup_expired_chats():
         db.save()
 
 
-@app.before_first_request
+# Replace the old hook
+@app.before_serving
 def _start_cleanup_thread():
     def loop():
         print(f"Cleanup thread started (interval={CLEANUP_INTERVAL_SECONDS}s, ttl={CHAT_TTL_SECONDS}s)")
-        while True:
+        while not CLEANUP_STOP.is_set():
             try:
                 _cleanup_expired_chats()
             except Exception as e:
                 print("Cleanup loop error:", e)
-            time.sleep(CLEANUP_INTERVAL_SECONDS)
+            # Wait with wake-up on shutdown
+            CLEANUP_STOP.wait(CLEANUP_INTERVAL_SECONDS)
     threading.Thread(target=loop, daemon=True).start()
+
+@app.after_serving
+def _stop_cleanup_thread():
+    CLEANUP_STOP.set()
 
 
 # WhatsApp webhook
