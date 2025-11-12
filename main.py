@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 import os, re, requests, db, json, uuid
 import textwrap
 import re
@@ -8,7 +8,7 @@ from urllib.parse import urljoin
 import time
 import threading
 import atexit, signal
-
+import hmac, hashlib
 
 app = Flask(__name__)
 
@@ -20,13 +20,14 @@ ZULIP_EXTRA_BOT_EMAIL = os.environ["ZULIP_EXTRA_BOT_EMAIL"]    # support‑secon
 GRAPH_API_TOKEN       = os.environ["GRAPH_API_TOKEN"]
 WEBHOOK_VERIFY_TOKEN  = os.environ["WEBHOOK_VERIFY_TOKEN"]
 BUSINESS_PHONE_NUMBER_ID = os.environ["BUSINESS_PHONE_NUMBER_ID"]
+APP_SECRET = os.environ["META_APP_SECRET"]  
 PORT                  = int(os.getenv("PORT", 5000))
 
 ZULIP_API_URL = "https://chat-test.filmlight.ltd.uk/api/v1/messages"
 ZULIP_BASE_URL = ZULIP_API_URL.split('/api', 1)[0] 
 MAX_CHATS     = 2                       # slot0 and slot1 only
 CLOSED_REPLY = "Chat closed, please contact support to start a new chat."
-CHAT_TTL_SECONDS = 60 * 3 # 3 minutes (will be 24 hours when implemented)
+CHAT_TTL_SECONDS = 60 * 60 * 20 # chats close after 20 hours on inactivity 
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
 CLEANUP_STOP = threading.Event()
 EXPIRY_LOCK = threading.Lock()
@@ -90,15 +91,23 @@ def _do_send_whatsapp(to: str, msg: str):
         print("WhatsApp send failed:", resp.status_code, resp.text)
     return resp
 
-# Zulip sender
-def _send_zulip_dm(recipients: list[str], content: str):
-    to_field = ",".join(recipients)           # "user1@example.com,user2@…"
-    return requests.post(
-        ZULIP_API_URL,
-        data={"type": "private", "to": to_field, "content": content},
-        auth=(ZULIP_BOT_EMAIL, ZULIP_API_KEY),
-        timeout=10
-    )
+def _verify_meta_signature():
+    sig = request.headers.get("X-Hub-Signature-256", "")
+    if not sig.startswith("sha256="):
+        return False
+    provided = sig.split("=", 1)[1].strip()
+
+    # get the raw bytes exactly as Meta signed them
+    raw = request.get_data(cache=True)  # cache=True lets Flask reuse it later
+
+    expected = hmac.new(
+        APP_SECRET.encode("utf-8"),
+        raw,
+        hashlib.sha256
+    ).hexdigest()
+
+    # timing-safe comparison
+    return hmac.compare_digest(provided, expected)
 
 def _send_zulip_dm_stream(stream: str, topic: str, content: str):
     print(f"Stream: {stream}, Topic: {topic}")
@@ -387,6 +396,9 @@ def verify_webhook():
 
 @app.post("/webhook")
 def receive_whatsapp():
+    if not _verify_meta_signature():
+        return "Invalid signature", 403
+    
     body = request.get_json(force=True)
     msg  = (body.get("entry",[{}])[0].get("changes",[{}])[0]
                   .get("value",{}).get("messages",[{}])[0])
